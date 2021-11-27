@@ -1,0 +1,118 @@
+trigger:
+- main
+
+resources:
+- repo: self
+
+variables:
+
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: 'CONNECTION ACR'
+  imageRepository: 'sitecontagemk6'
+  containerRegistry: 'AZURE CONTAINER REGISTRY'
+  dockerfilePath: '**/Dockerfile'
+  tag: '$(Build.BuildId)'
+  imagePullSecret: 'SECRET IMAGE'
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+  # Variáveis para execução dos testes de carga
+  ASPNETCORE_URLS: 'http://localhost:5000'
+  dirWebApp: './SiteContagem'
+  dllWebApp: 'SiteContagem.dll'
+  logExecutionWebApp: 'execution-webapp.log'
+  loadTestsScript: './Tests/tests-sitecontagem.js'
+  htmtReportK6: 'summary-loadtests.html'
+
+stages:
+- stage: Tests
+  displayName: Tests stage
+  jobs:
+  - job: Tests
+    displayName: Tests
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: UseDotNet@2
+      displayName: Instalação do .NET 6
+      inputs:
+        packageType: 'sdk'
+        version: '6.0.100'
+    - script: |
+        dotnet publish $(dirWebApp) -c Release -o app
+        cd ./app
+        nohup dotnet $(dllWebApp) > $(logExecutionWebApp) 2>&1 &
+        echo 'Aguardando a inicialização da aplicação a ser testada...'
+        sleep 10s
+      displayName: Executar a aplicação a ser testada em background (nohup)
+    - task: k6-load-test@0
+      inputs:
+        filename: '$(loadTestsScript)'
+      displayName: Executar testes de carga com a ferramenta k6
+    - script: |
+        cd ./app
+        cat $(logExecutionWebApp)
+      condition: always()
+      displayName: Exibir logs de execução da aplicação após os testes
+    - task: PublishHtmlReport@1
+      condition: always()
+      inputs:
+        reportDir: $(htmtReportK6)
+      displayName: Publicar relatório com os resultados dos testes de carga
+
+- stage: Build
+  displayName: Build stage
+  dependsOn: Tests
+
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: Docker@2
+      displayName: Build and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(imageRepository)
+        dockerfile: $(dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+
+    - upload: manifests
+      artifact: manifests
+
+- stage: Deploy
+  displayName: Deploy stage
+  dependsOn: Build
+
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'ExemploK6.exemplok6'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: createSecret
+              secretName: $(imagePullSecret)
+              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
+
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              manifests: |
+                $(Pipeline.Workspace)/manifests/deployment.yml
+                $(Pipeline.Workspace)/manifests/service.yml
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(containerRegistry)/$(imageRepository):$(tag)
