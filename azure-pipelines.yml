@@ -22,7 +22,7 @@ variables:
   dirWebApp: './SiteContagem'
   dllWebApp: 'SiteContagem.dll'
   logExecutionWebApp: 'execution-webapp.log'
-  loadTestsScript: './Tests/tests-sitecontagem.js'
+  loadTestsScript: './Tests/tests-sitecontagem-report.js'
   htmtReportK6: 'summary-loadtests.html'
 
 stages:
