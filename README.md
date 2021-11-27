@@ -1,0 +1,1 @@
+# AzureDevOps-Kubernetes-ASPNETCore-DotNet6-k6-LoadTests-ACR-AKS
